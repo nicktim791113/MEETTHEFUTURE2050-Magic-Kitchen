@@ -1,0 +1,21 @@
+{
+  "name": "王國廚房：我的魔法平底鍋",
+  "short_name": "王國廚房",
+  "start_url": "./index.html",
+  "display": "fullscreen",
+  "background_color": "#FFF3E0",
+  "theme_color": "#FFF3E0",
+  "orientation": "landscape",
+  "icons": [
+    {
+      "src": "./assets/icon.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "./assets/icon.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

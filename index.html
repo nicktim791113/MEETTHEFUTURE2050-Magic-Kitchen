@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <!-- 加入 PWA 魔法清單，讓它能安裝到平板主畫面 -->
+    <link rel="manifest" href="./manifest.json">
+    <meta name="theme-color" content="#FFF3E0">
+    <!-- 蘋果專屬的魔法設定 -->
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <link rel="apple-touch-icon" href="./assets/icon.png">
+    
+    <title>王國廚房：我的魔法平底鍋</title>
+    
+    <style>
+        /* CSS 樣式與之前相同，保持滿版且防止捲動 */
+        body, html {
+            margin: 0; padding: 0; width: 100%; height: 100%;
+            overflow: hidden; background-color: #FFF3E0;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            touch-action: none;
+            -webkit-touch-callout: none; /* 防止長按跑出選單 */
+            -webkit-user-select: none;   /* 防止選取文字 */
+            user-select: none;
+        }
+        #gameCanvas { display: block; width: 100%; height: 100%; }
+        
+        /* 升級版的載入畫面，加入了進度條的準備 */
+        #uiLayer {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none; display: flex; flex-direction: column;
+            align-items: center; justify-content: center;
+            background-color: #FFF3E0; transition: opacity 0.5s;
+        }
+        #loadingText { font-size: 28px; color: #D84315; font-weight: bold; margin-bottom: 20px;}
+        #progressBar { width: 300px; height: 20px; background-color: #FFE082; border-radius: 10px; overflow: hidden; }
+        #progressFill { width: 0%; height: 100%; background-color: #4CAF50; transition: width 0.1s; }
+    </style>
+</head>
+<body>
+    <!-- UI 覆蓋層：載入進度與開始按鈕 -->
+    <div id="uiLayer">
+        <div id="loadingText">樂佩正在搬運食材... ✨</div>
+        <div id="progressBar"><div id="progressFill"></div></div>
+    </div>
+    
+    <canvas id="gameCanvas"></canvas>
+
+    <script>
+        // ==========================================
+        // 🔮 魔法地圖：外部素材路徑設定 (Asset Manifest)
+        // 在 GitHub 環境中，我們可以這樣清晰地管理素材
+        // ==========================================
+        const assetPaths = {
+            images: {
+                bg: './assets/images/background.jpg', // 你可以在 GitHub 放一張真的木頭桌子背景！
+                pan: './assets/images/pan.png',
+                apple: './assets/images/apple.png',
+                carrot: './assets/images/carrot.png',
+                broccoli: './assets/images/broccoli.png',
+                pascal: './assets/images/pascal.png'
+            },
+            sounds: {
+                bgm: './assets/sounds/magical_forest.mp3', // 輕柔的背景音樂
+                chop: './assets/sounds/chop.mp3',          // 真實的切菜聲
+                sizzle: './assets/sounds/sizzle.mp3',      // 滋滋作響的煎烤聲
+                magic: './assets/sounds/magic_chime.mp3'   // 成功時的魔法音效
+            }
+        };
+
+        // ==========================================
+        // 📦 魔法儲藏室：AssetManager (負責載入外部素材)
+        // ==========================================
+        const Assets = {
+            images: {},
+            sounds: {}
+        };
+
+        // 模擬的載入邏輯（為了在這邊預覽，如果找不到外部圖片，會自動 fallback 使用我們之前畫的 SVG 向量魔法陣！）
+        function preloadAssets(onProgress, onComplete) {
+            let loadedCount = 0;
+            const imageKeys = Object.keys(assetPaths.images);
+            // 這裡暫時略過音效的載入，專注於圖片
+            const totalAssets = imageKeys.length;
+
+            if(totalAssets === 0) return onComplete();
+
+            imageKeys.forEach(key => {
+                const img = new Image();
+                
+                // 【核心機制】：設定跨域允許，這在 GitHub Pages 非常重要！
+                img.crossOrigin = "Anonymous"; 
+
+                img.onload = () => {
+                    Assets.images[key] = img;
+                    loadedCount++;
+                    onProgress(loadedCount / totalAssets);
+                    if (loadedCount === totalAssets) onComplete();
+                };
+
+                // 【樂佩的防呆魔法】：
+                // 因為我們現在在預覽沙盒裡，沒有 "./assets/" 資料夾。
+                // 為了讓你在這裡也能看到畫面，如果載入失敗，我會立刻施展之前的 SVG 魔法陣來替代！
+                img.onerror = () => {
+                    console.log(`哎呀！找不到 ${key} 的圖片，樂佩啟動 SVG 魔法備案！✨`);
+                    Assets.images[key] = createFallbackSVG(key);
+                    loadedCount++;
+                    onProgress(loadedCount / totalAssets);
+                    if (loadedCount === totalAssets) onComplete();
+                };
+
+                // 嘗試載入 GitHub 路徑
+                img.src = assetPaths.images[key];
+            });
+        }
+
+        // --- 備用 SVG 生成器 (與上一個版本相同，確保預覽不壞掉) ---
+        function createFallbackSVG(key) {
+            const svgData = {
+                pan: `<svg width="250" height="250" viewBox="0 0 250 250" xmlns="http://www.w3.org/2000/svg"><ellipse cx="125" cy="140" rx="95" ry="40" fill="rgba(0,0,0,0.2)"/><path d="M200 125 L240 105" stroke="#D84315" stroke-width="25" stroke-linecap="round"/><ellipse cx="125" cy="125" rx="90" ry="35" fill="#424242"/><path d="M35 125 C35 160 215 160 215 125 Z" fill="#212121"/><ellipse cx="125" cy="120" rx="80" ry="25" fill="#111"/></svg>`,
+                apple: `<svg width="120" height="120" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg"><path d="M60 25 C30 25 20 50 20 75 C20 100 40 110 60 105 C80 110 100 100 100 75 C100 50 90 25 60 25 Z" fill="#E53935"/><path d="M60 25 Q55 10 65 5" stroke="#5D4037" stroke-width="6" stroke-linecap="round" fill="none"/><path d="M63 15 C75 5 95 10 90 25 C85 40 65 30 63 15 Z" fill="#4CAF50"/></svg>`,
+                carrot: `<svg width="120" height="120" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg"><g transform="translate(60, 65) rotate(15) translate(-60, -65)"><path d="M45 35 Q60 25 75 35 L68 105 Q60 115 52 105 Z" fill="#FF9800"/><path d="M55 35 Q40 5 60 10 Q70 5 65 35" fill="#4CAF50"/></g></svg>`,
+                broccoli: `<svg width="120" height="120" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg"><path d="M50 70 L45 105 Q60 110 75 105 L70 70 Z" fill="#81C784"/><circle cx="45" cy="55" r="25" fill="#43A047"/><circle cx="75" cy="55" r="25" fill="#43A047"/><circle cx="60" cy="40" r="30" fill="#2E7D32"/></svg>`,
+                pascal: `<svg width="150" height="150" viewBox="0 0 150 150" xmlns="http://www.w3.org/2000/svg"><path d="M30 100 Q30 50 80 50 C120 50 130 80 120 110 Q90 130 60 120 Q30 130 30 100 Z" fill="#66BB6A"/><circle cx="60" cy="75" r="15" fill="white"/><circle cx="65" cy="75" r="6" fill="#1B5E20"/></svg>`,
+                bg: `<svg width="800" height="600" viewBox="0 0 800 600" xmlns="http://www.w3.org/2000/svg"><rect width="800" height="600" fill="#FFF9C4"/></svg>` // 簡單的背景色
+            };
+            const img = new Image();
+            if(svgData[key]) {
+                img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgData[key]);
+            }
+            return img;
+        }
+
+        // ==========================================
+        // 核心引擎與邏輯 (與先前架構相同，已針對外部素材最佳化)
+        // ==========================================
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        let width, height;
+
+        function resize() {
+            width = window.innerWidth; height = window.innerHeight;
+            canvas.width = width * window.devicePixelRatio;
+            canvas.height = height * window.devicePixelRatio;
+            ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        // --- 遊戲資料 ---
+        const GameState = { MENU: 0, ORDER: 1, PREP: 2, COOK: 3, REWARD: 4 };
+        let state = GameState.MENU;
+        const Foods = [
+            { id: 'apple', color: '#E53935', name: '紅色的蘋果' },
+            { id: 'carrot', color: '#FB8C00', name: '橘色的蘿蔔' },
+            { id: 'broccoli', color: '#43A047', name: '綠色的花椰菜' }
+        ];
+        let currentFood = null;
+        let cutCount = 0; let targetCuts = 3;
+        let isDragging = false; let pointerX = 0, pointerY = 0; let foodX = 0, foodY = 0;
+
+        // --- 語音系統 ---
+        function speak(text) {
+            if ('speechSynthesis' in window) {
+                window.speechSynthesis.cancel();
+                const utterance = new SpeechSynthesisUtterance(text);
+                utterance.lang = 'zh-TW'; utterance.rate = 0.85; utterance.pitch = 1.2;
+                window.speechSynthesis.speak(utterance);
+            }
+        }
+
+        // --- 渲染功能 ---
+        function drawBackground() {
+            // 現在我們可以畫出一張真正的背景圖了！
+            if (Assets.images.bg && Assets.images.bg.complete) {
+                // 為了填滿畫面，可能需要做一些裁切計算，這裡簡單拉伸示範
+                ctx.drawImage(Assets.images.bg, 0, 0, width, height);
+            } else {
+                ctx.fillStyle = '#FFF9C4'; ctx.fillRect(0, 0, width, height);
+            }
+        }
+
+        function renderMenu() {
+            ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+            ctx.fillStyle = '#E65100'; ctx.font = 'bold 48px Arial';
+            ctx.fillText('王國廚房 🍳', width / 2, height / 2 - 80);
+            
+            ctx.fillStyle = '#4CAF50';
+            ctx.beginPath(); ctx.roundRect(width / 2 - 120, height / 2 + 30, 240, 80, 40); ctx.fill();
+            ctx.fillStyle = 'white'; ctx.font = 'bold 32px Arial';
+            ctx.fillText('開始料理 ✨', width / 2, height / 2 + 70);
+        }
+
+        function renderOrder() {
+            ctx.textAlign = 'center'; ctx.fillStyle = '#3E2723'; ctx.font = 'bold 36px Arial';
+            ctx.fillText('好想吃...', width / 2, height / 4);
+
+            ctx.drawImage(Assets.images.pascal, width / 2 - 75, height / 2 - 75, 150, 150);
+            
+            ctx.beginPath(); ctx.ellipse(width / 2 + 90, height / 2 - 90, 60, 50, 0, 0, Math.PI*2);
+            ctx.fillStyle = 'white'; ctx.fill();
+            ctx.lineWidth = 4; ctx.strokeStyle = '#CCC'; ctx.stroke();
+            
+            const foodImg = Assets.images[currentFood.id];
+            if(foodImg) ctx.drawImage(foodImg, width / 2 + 50, height / 2 - 125, 80, 80);
+        }
+
+        function renderPrep() {
+            ctx.fillStyle = '#8D6E63'; 
+            ctx.beginPath(); ctx.roundRect(width/2 - 200, height/2 - 100, 400, 250, 30); ctx.fill();
+            
+            ctx.textAlign = 'center'; ctx.fillStyle = '#3E2723'; ctx.font = 'bold 36px Arial';
+            ctx.fillText('點擊來切碎它！', width / 2, height / 4);
+
+            const img = Assets.images[currentFood.id];
+            if (!img) return;
+
+            if (cutCount === 0) {
+                const scale = 1 + Math.sin(Date.now() / 200) * 0.05;
+                const sw = 120 * scale; const sh = 120 * scale;
+                ctx.drawImage(img, width / 2 - sw/2, height / 2 + 25 - sh/2, sw, sh);
+            } else {
+                for(let i=0; i<cutCount; i++){
+                    ctx.globalAlpha = 0.8;
+                    ctx.drawImage(img, width / 2 - 60 + (i*40), height / 2 - 20 + (Math.sin(i)*20), 80, 80);
+                }
+                ctx.globalAlpha = 1.0;
+            }
+        }
+
+        function renderCook() {
+            if(Assets.images.pan) ctx.drawImage(Assets.images.pan, width/2 - 125, height/2 - 125, 250, 250);
+
+            ctx.textAlign = 'center'; ctx.fillStyle = '#3E2723'; ctx.font = 'bold 36px Arial';
+            ctx.fillText('拖進鍋子裡！', width / 2, height / 4);
+
+            const img = Assets.images[currentFood.id];
+            if(!img) return;
+
+            const bounce = isDragging ? 0 : Math.sin(Date.now() / 150) * 10;
+            const renderScale = isDragging ? 1.2 : 1.0;
+            const size = 100 * renderScale;
+            ctx.drawImage(img, foodX - size/2, foodY + bounce - size/2, size, size);
+        }
+
+        function renderReward() {
+            ctx.textAlign = 'center'; ctx.fillStyle = '#E65100'; ctx.font = 'bold 48px Arial';
+            ctx.fillText('太美味了！', width / 2, height / 4);
+            
+            const bounce = Math.abs(Math.sin(Date.now() / 150) * 30);
+            ctx.drawImage(Assets.images.pascal, width / 2 - 75, height / 2 - 75 + bounce, 150, 150);
+        }
+
+        function gameLoop() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            drawBackground();
+
+            switch (state) {
+                case GameState.MENU: renderMenu(); break;
+                case GameState.ORDER: renderOrder(); break;
+                case GameState.PREP: renderPrep(); break;
+                case GameState.COOK: renderCook(); break;
+                case GameState.REWARD: renderReward(); break;
+            }
+            requestAnimationFrame(gameLoop);
+        }
+
+        // --- 互動邏輯 ---
+        function startNewOrder() {
+            currentFood = Foods[Math.floor(Math.random() * Foods.length)];
+            state = GameState.ORDER;
+            speak(`好餓喔！我想吃 ${currentFood.name}`);
+            
+            setTimeout(() => {
+                if(state === GameState.ORDER) {
+                    state = GameState.PREP; cutCount = 0;
+                    speak(`點點螢幕，幫忙切 ${currentFood.name}`);
+                }
+            }, 3500);
+        }
+
+        function handleInteraction(x, y) {
+            const tolerance = 150; 
+            if (state === GameState.MENU) {
+                if (y > height / 2 && y < height / 2 + 150) {
+                    speak("開始料理！");
+                    setTimeout(startNewOrder, 1000);
+                }
+            } 
+            else if (state === GameState.PREP) {
+                if (Math.hypot(x - width/2, y - (height/2 + 25)) < tolerance) {
+                    cutCount++;
+                    // 這裡可以加入外部載入的 chop.mp3 音效播放！
+                    speak("切！");
+                    
+                    if (cutCount >= targetCuts) {
+                        speak("切好了！");
+                        setTimeout(() => {
+                            state = GameState.COOK;
+                            foodX = width / 2; foodY = height * 0.8;
+                            speak("放進鍋子煮一煮！");
+                        }, 1000);
+                    }
+                }
+            }
+            else if (state === GameState.REWARD) {
+                startNewOrder();
+            }
+        }
+
+        canvas.addEventListener('pointerdown', (e) => {
+            pointerX = e.clientX; pointerY = e.clientY;
+            if (state === GameState.COOK) {
+                if (Math.hypot(pointerX - foodX, pointerY - foodY) < 100) isDragging = true;
+            } else handleInteraction(pointerX, pointerY);
+        });
+
+        canvas.addEventListener('pointermove', (e) => {
+            if (isDragging && state === GameState.COOK) {
+                foodX = e.clientX; foodY = e.clientY;
+            }
+        });
+
+        canvas.addEventListener('pointerup', (e) => {
+            if (isDragging && state === GameState.COOK) {
+                isDragging = false;
+                if (Math.hypot(foodX - width/2, foodY - height/2) < 120) { 
+                    // 這裡可以加入外部載入的 sizzle.mp3 音效播放！
+                    speak("劈哩啪啦！好香喔！");
+                    state = GameState.REWARD;
+                    setTimeout(() => speak(`好棒！美味的 ${currentFood.name}`), 1500);
+                } else {
+                    foodX = width / 2; foodY = height * 0.8;
+                    speak("要放進鍋子裡喔！");
+                }
+            }
+        });
+
+        // ==========================================
+        // 🚀 啟動魔法：載入外部素材 -> 隱藏 UI -> 開始遊戲
+        // ==========================================
+        const progressFill = document.getElementById('progressFill');
+        const uiLayer = document.getElementById('uiLayer');
+        const loadingText = document.getElementById('loadingText');
+
+        preloadAssets(
+            (progress) => {
+                // 更新進度條
+                progressFill.style.width = `${progress * 100}%`;
+            },
+            () => {
+                // 載入完成！
+                loadingText.innerText = "魔法準備就緒！✨";
+                setTimeout(() => {
+                    uiLayer.style.opacity = '0'; // 淡出載入畫面
+                    setTimeout(() => {
+                        uiLayer.style.display = 'none';
+                        requestAnimationFrame(gameLoop);
+                    }, 500);
+                }, 500);
+            }
+        );
+
+    </script>
+</body>
+</html>
