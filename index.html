@@ -81,37 +81,46 @@
         function preloadAssets(onProgress, onComplete) {
             let loadedCount = 0;
             const imageKeys = Object.keys(assetPaths.images);
-            // 這裡暫時略過音效的載入，專注於圖片
-            const totalAssets = imageKeys.length;
+            const soundKeys = Object.keys(assetPaths.sounds);
+            const totalAssets = imageKeys.length + soundKeys.length;
 
             if(totalAssets === 0) return onComplete();
 
+            // 載入圖片
             imageKeys.forEach(key => {
                 const img = new Image();
-                
-                // 【核心機制】：設定跨域允許，這在 GitHub Pages 非常重要！
                 img.crossOrigin = "Anonymous"; 
-
                 img.onload = () => {
                     Assets.images[key] = img;
                     loadedCount++;
                     onProgress(loadedCount / totalAssets);
                     if (loadedCount === totalAssets) onComplete();
                 };
-
-                // 【樂佩的防呆魔法】：
-                // 因為我們現在在預覽沙盒裡，沒有 "./assets/" 資料夾。
-                // 為了讓你在這裡也能看到畫面，如果載入失敗，我會立刻施展之前的 SVG 魔法陣來替代！
                 img.onerror = () => {
-                    console.log(`哎呀！找不到 ${key} 的圖片，樂佩啟動 SVG 魔法備案！✨`);
+                    console.log(`哎呀！找不到 ${key} 的圖片，樂佩啟動 SVG 備案！✨`);
                     Assets.images[key] = createFallbackSVG(key);
                     loadedCount++;
                     onProgress(loadedCount / totalAssets);
                     if (loadedCount === totalAssets) onComplete();
                 };
-
-                // 嘗試載入 GitHub 路徑
                 img.src = assetPaths.images[key];
+            });
+
+            // 載入音效
+            soundKeys.forEach(key => {
+                const audio = new Audio();
+                audio.crossOrigin = "Anonymous";
+                const checkComplete = () => {
+                    if (Assets.sounds[key]) return; // 避免重複觸發
+                    Assets.sounds[key] = audio;
+                    loadedCount++;
+                    onProgress(loadedCount / totalAssets);
+                    if (loadedCount === totalAssets) onComplete();
+                };
+                audio.addEventListener('canplaythrough', checkComplete, { once: true });
+                audio.addEventListener('error', checkComplete, { once: true });
+                audio.src = assetPaths.sounds[key];
+                audio.load();
             });
         }
 
@@ -159,6 +168,10 @@
         let currentFood = null;
         let cutCount = 0; let targetCuts = 3;
         let isDragging = false; let pointerX = 0, pointerY = 0; let foodX = 0, foodY = 0;
+        
+        // --- 粒子特效與拖曳平滑 ---
+        let particles = [];
+        let foodTargetX = 0, foodTargetY = 0; // 用於平滑拖曳與返回
 
         // --- 語音系統 ---
         function speak(text) {
@@ -167,6 +180,30 @@
                 const utterance = new SpeechSynthesisUtterance(text);
                 utterance.lang = 'zh-TW'; utterance.rate = 0.85; utterance.pitch = 1.2;
                 window.speechSynthesis.speak(utterance);
+            }
+        }
+
+        // --- 音效系統 ---
+        function playSound(key) {
+            if (Assets.sounds[key] && Assets.sounds[key].readyState >= 2) {
+                // 每次播放複製一份新的，這樣可以重疊播放音效
+                const soundClone = Assets.sounds[key].cloneNode();
+                soundClone.volume = 0.7;
+                soundClone.play().catch(e => console.log("音效播放被瀏覽器阻擋", e));
+            }
+        }
+
+        // --- 魔法粒子系統 ---
+        function createParticles(x, y, color, count) {
+            for(let i=0; i<count; i++) {
+                particles.push({
+                    x: x, y: y,
+                    vx: (Math.random() - 0.5) * 15, // 隨機 X 速度
+                    vy: (Math.random() - 0.5) * 15, // 隨機 Y 速度
+                    life: 1.0, 
+                    color: color,
+                    size: Math.random() * 6 + 3
+                });
             }
         }
 
@@ -256,6 +293,19 @@
             ctx.clearRect(0, 0, canvas.width, canvas.height);
             drawBackground();
 
+            // 更新邏輯
+            if (!isDragging && state === GameState.COOK) {
+                foodX += (foodTargetX - foodX) * 0.15; // 平滑返回
+                foodY += (foodTargetY - foodY) * 0.15;
+            }
+            for (let i = particles.length - 1; i >= 0; i--) {
+                let p = particles[i];
+                p.x += p.vx; p.y += p.vy;
+                p.vy += 0.5; // 重力效果
+                p.life -= 0.02; // 逐漸消失
+                if (p.life <= 0) particles.splice(i, 1);
+            }
+
             switch (state) {
                 case GameState.MENU: renderMenu(); break;
                 case GameState.ORDER: renderOrder(); break;
@@ -263,6 +313,17 @@
                 case GameState.COOK: renderCook(); break;
                 case GameState.REWARD: renderReward(); break;
             }
+            
+            // 畫粒子
+            particles.forEach(p => {
+                ctx.globalAlpha = p.life;
+                ctx.fillStyle = p.color;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, p.size, 0, Math.PI*2);
+                ctx.fill();
+            });
+            ctx.globalAlpha = 1.0;
+
             requestAnimationFrame(gameLoop);
         }
 
@@ -285,13 +346,20 @@
             if (state === GameState.MENU) {
                 if (y > height / 2 && y < height / 2 + 150) {
                     speak("開始料理！");
+                    // 嘗試播放背景音樂並循環
+                    if (Assets.sounds.bgm) {
+                        Assets.sounds.bgm.loop = true;
+                        Assets.sounds.bgm.volume = 0.3;
+                        Assets.sounds.bgm.play().catch(e => console.log(e));
+                    }
                     setTimeout(startNewOrder, 1000);
                 }
             } 
             else if (state === GameState.PREP) {
                 if (Math.hypot(x - width/2, y - (height/2 + 25)) < tolerance) {
                     cutCount++;
-                    // 這裡可以加入外部載入的 chop.mp3 音效播放！
+                    playSound('chop'); // 播放切菜聲
+                    createParticles(x, y, currentFood.color, 15); // 噴發蔬菜顏色的粒子
                     speak("切！");
                     
                     if (cutCount >= targetCuts) {
@@ -299,6 +367,7 @@
                         setTimeout(() => {
                             state = GameState.COOK;
                             foodX = width / 2; foodY = height * 0.8;
+                            foodTargetX = width / 2; foodTargetY = height * 0.8; // 設定平滑目標點
                             speak("放進鍋子煮一煮！");
                         }, 1000);
                     }
@@ -319,6 +388,8 @@
         canvas.addEventListener('pointermove', (e) => {
             if (isDragging && state === GameState.COOK) {
                 foodX = e.clientX; foodY = e.clientY;
+                // 即時更新目標點，防止 Tweening 在拖曳時拉扯
+                foodTargetX = foodX; foodTargetY = foodY;
             }
         });
 
@@ -326,12 +397,18 @@
             if (isDragging && state === GameState.COOK) {
                 isDragging = false;
                 if (Math.hypot(foodX - width/2, foodY - height/2) < 120) { 
-                    // 這裡可以加入外部載入的 sizzle.mp3 音效播放！
+                    playSound('sizzle'); // 滋滋聲
+                    createParticles(width/2, height/2, '#FFEB3B', 40); // 鍋子裡的黃色魔法星星
                     speak("劈哩啪啦！好香喔！");
                     state = GameState.REWARD;
-                    setTimeout(() => speak(`好棒！美味的 ${currentFood.name}`), 1500);
+                    setTimeout(() => {
+                        playSound('magic'); // 成功魔法聲
+                        createParticles(width/2, height/2 - 75, '#FFFFFF', 50); // 樂佩出現時的白色星星
+                        speak(`好棒！美味的 ${currentFood.name}`);
+                    }, 1500);
                 } else {
-                    foodX = width / 2; foodY = height * 0.8;
+                    // 放開不在鍋子裡時，設定返回目標點 (Tweening 將會自動平滑移動)
+                    foodTargetX = width / 2; foodTargetY = height * 0.8;
                     speak("要放進鍋子裡喔！");
                 }
             }
